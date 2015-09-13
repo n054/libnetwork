@@ -10,7 +10,7 @@ import (
 
 	"github.com/docker/docker/pkg/plugins"
 	"github.com/docker/libnetwork/driverapi"
-	_ "github.com/docker/libnetwork/netutils"
+	_ "github.com/docker/libnetwork/testutils"
 	"github.com/docker/libnetwork/types"
 )
 
@@ -59,7 +59,6 @@ func setupPlugin(t *testing.T, name string, mux *http.ServeMux) func() {
 
 type testEndpoint struct {
 	t              *testing.T
-	id             int
 	src            string
 	dst            string
 	address        string
@@ -74,16 +73,11 @@ type testEndpoint struct {
 	routeType      int
 }
 
-func (test *testEndpoint) Interfaces() []driverapi.InterfaceInfo {
-	// return an empty one so we don't trip the check for existing
-	// interfaces; we don't care about this after that
-	return []driverapi.InterfaceInfo{}
+func (test *testEndpoint) Interface() driverapi.InterfaceInfo {
+	return nil
 }
 
-func (test *testEndpoint) AddInterface(ID int, mac net.HardwareAddr, ipv4 net.IPNet, ipv6 net.IPNet) error {
-	if ID != test.id {
-		test.t.Fatalf("Wrong ID passed to AddInterface: %d", ID)
-	}
+func (test *testEndpoint) AddInterface(mac net.HardwareAddr, ipv4 net.IPNet, ipv6 net.IPNet) error {
 	ip4, net4, _ := net.ParseCIDR(test.address)
 	ip6, net6, _ := net.ParseCIDR(test.addressIPv6)
 	if ip4 != nil {
@@ -104,8 +98,8 @@ func (test *testEndpoint) AddInterface(ID int, mac net.HardwareAddr, ipv4 net.IP
 	return nil
 }
 
-func (test *testEndpoint) InterfaceNames() []driverapi.InterfaceNameInfo {
-	return []driverapi.InterfaceNameInfo{test}
+func (test *testEndpoint) InterfaceName() driverapi.InterfaceNameInfo {
+	return test
 }
 
 func compareIPs(t *testing.T, kind string, shouldBe string, supplied net.IP) {
@@ -138,20 +132,6 @@ func (test *testEndpoint) SetGatewayIPv6(ipv6 net.IP) error {
 	return nil
 }
 
-func (test *testEndpoint) SetHostsPath(p string) error {
-	if p != test.hostsPath {
-		test.t.Fatalf(`Wrong HostsPath; expected "%s", got "%s"`, test.hostsPath, p)
-	}
-	return nil
-}
-
-func (test *testEndpoint) SetResolvConfPath(p string) error {
-	if p != test.resolvConfPath {
-		test.t.Fatalf(`Wrong ResolvConfPath; expected "%s", got "%s"`, test.resolvConfPath, p)
-	}
-	return nil
-}
-
 func (test *testEndpoint) SetNames(src string, dst string) error {
 	if test.src != src {
 		test.t.Fatalf(`Wrong SrcName; expected "%s", got "%s"`, test.src, src)
@@ -162,7 +142,7 @@ func (test *testEndpoint) SetNames(src string, dst string) error {
 	return nil
 }
 
-func (test *testEndpoint) AddStaticRoute(destination *net.IPNet, routeType int, nextHop net.IP, interfaceID int) error {
+func (test *testEndpoint) AddStaticRoute(destination *net.IPNet, routeType int, nextHop net.IP) error {
 	compareIPNets(test.t, "Destination", test.destination, *destination)
 	compareIPs(test.t, "NextHop", test.nextHop, nextHop)
 
@@ -170,15 +150,7 @@ func (test *testEndpoint) AddStaticRoute(destination *net.IPNet, routeType int, 
 		test.t.Fatalf(`Wrong RouteType; expected "%d", got "%d"`, test.routeType, routeType)
 	}
 
-	if test.id != interfaceID {
-		test.t.Fatalf(`Wrong InterfaceID; expected "%d", got "%d"`, test.id, interfaceID)
-	}
-
 	return nil
-}
-
-func (test *testEndpoint) ID() int {
-	return test.id
 }
 
 func TestRemoteDriver(t *testing.T) {
@@ -221,13 +193,12 @@ func TestRemoteDriver(t *testing.T) {
 	})
 	handle(t, mux, "CreateEndpoint", func(msg map[string]interface{}) interface{} {
 		iface := map[string]interface{}{
-			"ID":          ep.id,
 			"Address":     ep.address,
 			"AddressIPv6": ep.addressIPv6,
 			"MacAddress":  ep.macAddress,
 		}
 		return map[string]interface{}{
-			"Interfaces": []interface{}{iface},
+			"Interface": iface,
 		}
 	})
 	handle(t, mux, "Join", func(msg map[string]interface{}) interface{} {
@@ -241,17 +212,14 @@ func TestRemoteDriver(t *testing.T) {
 			"GatewayIPv6":    ep.gatewayIPv6,
 			"HostsPath":      ep.hostsPath,
 			"ResolvConfPath": ep.resolvConfPath,
-			"InterfaceNames": []map[string]interface{}{
-				map[string]interface{}{
-					"SrcName":   ep.src,
-					"DstPrefix": ep.dst,
-				},
+			"InterfaceName": map[string]interface{}{
+				"SrcName":   ep.src,
+				"DstPrefix": ep.dst,
 			},
 			"StaticRoutes": []map[string]interface{}{
 				map[string]interface{}{
 					"Destination": ep.destination,
 					"RouteType":   ep.routeType,
-					"InterfaceID": ep.id,
 					"NextHop":     ep.nextHop,
 				},
 			},
@@ -282,13 +250,13 @@ func TestRemoteDriver(t *testing.T) {
 		t.Fatal("Driver type does not match that given")
 	}
 
-	netID := types.UUID("dummy-network")
+	netID := "dummy-network"
 	err = driver.CreateNetwork(netID, map[string]interface{}{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	endID := types.UUID("dummy-endpoint")
+	endID := "dummy-endpoint"
 	err = driver.CreateEndpoint(netID, endID, ep, map[string]interface{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -345,7 +313,7 @@ func TestDriverError(t *testing.T) {
 
 	driver := newDriver(plugin, p.Client)
 
-	if err := driver.CreateEndpoint(types.UUID("dummy"), types.UUID("dummy"), &testEndpoint{t: t}, map[string]interface{}{}); err == nil {
+	if err := driver.CreateEndpoint("dummy", "dummy", &testEndpoint{t: t}, map[string]interface{}{}); err == nil {
 		t.Fatalf("Expected error from driver")
 	}
 }
@@ -357,13 +325,11 @@ func TestMissingValues(t *testing.T) {
 	defer setupPlugin(t, plugin, mux)()
 
 	ep := &testEndpoint{
-		t:  t,
-		id: 0,
+		t: t,
 	}
 
 	handle(t, mux, "CreateEndpoint", func(msg map[string]interface{}) interface{} {
 		iface := map[string]interface{}{
-			"ID":          ep.id,
 			"Address":     ep.address,
 			"AddressIPv6": ep.addressIPv6,
 			"MacAddress":  ep.macAddress,
@@ -379,7 +345,7 @@ func TestMissingValues(t *testing.T) {
 	}
 	driver := newDriver(plugin, p.Client)
 
-	if err := driver.CreateEndpoint(types.UUID("dummy"), types.UUID("dummy"), ep, map[string]interface{}{}); err != nil {
+	if err := driver.CreateEndpoint("dummy", "dummy", ep, map[string]interface{}{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -387,11 +353,11 @@ func TestMissingValues(t *testing.T) {
 type rollbackEndpoint struct {
 }
 
-func (r *rollbackEndpoint) Interfaces() []driverapi.InterfaceInfo {
-	return []driverapi.InterfaceInfo{}
+func (r *rollbackEndpoint) Interface() driverapi.InterfaceInfo {
+	return nil
 }
 
-func (r *rollbackEndpoint) AddInterface(_ int, _ net.HardwareAddr, _ net.IPNet, _ net.IPNet) error {
+func (r *rollbackEndpoint) AddInterface(_ net.HardwareAddr, _ net.IPNet, _ net.IPNet) error {
 	return fmt.Errorf("fail this to trigger a rollback")
 }
 
@@ -405,13 +371,12 @@ func TestRollback(t *testing.T) {
 
 	handle(t, mux, "CreateEndpoint", func(msg map[string]interface{}) interface{} {
 		iface := map[string]interface{}{
-			"ID":          0,
 			"Address":     "192.168.4.5/16",
 			"AddressIPv6": "",
 			"MacAddress":  "7a:12:34:56:78:90",
 		}
 		return map[string]interface{}{
-			"Interfaces": []interface{}{iface},
+			"Interface": interface{}(iface),
 		}
 	})
 	handle(t, mux, "DeleteEndpoint", func(msg map[string]interface{}) interface{} {
@@ -427,7 +392,7 @@ func TestRollback(t *testing.T) {
 
 	ep := &rollbackEndpoint{}
 
-	if err := driver.CreateEndpoint(types.UUID("dummy"), types.UUID("dummy"), ep, map[string]interface{}{}); err == nil {
+	if err := driver.CreateEndpoint("dummy", "dummy", ep, map[string]interface{}{}); err == nil {
 		t.Fatalf("Expected error from driver")
 	}
 	if !rolledback {

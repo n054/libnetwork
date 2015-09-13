@@ -27,7 +27,7 @@ import (
 
 const (
 	// DefaultHTTPHost is used if only port is provided to -H flag e.g. docker -d -H tcp://:8080
-	DefaultHTTPHost = "127.0.0.1"
+	DefaultHTTPHost = "0.0.0.0"
 	// DefaultHTTPPort is the default http port used by dnet
 	DefaultHTTPPort = 2385
 	// DefaultUnixSocket exported
@@ -198,6 +198,10 @@ func (d *dnetConnection) dnetDaemon() error {
 	post = r.PathPrefix("/{.*}/services").Subrouter()
 	post.Methods("GET", "PUT", "POST", "DELETE").HandlerFunc(httpHandler)
 	post = r.PathPrefix("/services").Subrouter()
+	post.Methods("GET", "PUT", "POST", "DELETE").HandlerFunc(httpHandler)
+	post = r.PathPrefix("/{.*}/sandboxes").Subrouter()
+	post.Methods("GET", "PUT", "POST", "DELETE").HandlerFunc(httpHandler)
+	post = r.PathPrefix("/sandboxes").Subrouter()
 	post.Methods("GET", "PUT", "POST", "DELETE").HandlerFunc(httpHandler)
 	return http.ListenAndServe(d.addr, r)
 }
