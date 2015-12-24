@@ -836,7 +836,6 @@ func (n *network) updateSvcRecord(ep *endpoint, localEps []*endpoint, isAdd bool
 	}
 
 	n.Lock()
-	var recs []etchosts.Record
 	if iface := ep.Iface(); iface.Address() != nil {
 		if isAdd {
 			// If we already have this endpoint in service db just return
@@ -851,42 +850,8 @@ func (n *network) updateSvcRecord(ep *endpoint, localEps []*endpoint, isAdd bool
 			delete(sr, ep.Name())
 			delete(sr, ep.Name()+"."+n.name)
 		}
-
-		recs = append(recs, etchosts.Record{
-			Hosts: ep.Name(),
-			IP:    iface.Address().IP.String(),
-		})
-
-		recs = append(recs, etchosts.Record{
-			Hosts: ep.Name() + "." + n.name,
-			IP:    iface.Address().IP.String(),
-		})
 	}
 	n.Unlock()
-
-	// If there are no records to add or delete then simply return here
-	if len(recs) == 0 {
-		return
-	}
-
-	var sbList []*sandbox
-	for _, lEp := range localEps {
-		if ep.ID() == lEp.ID() {
-			continue
-		}
-
-		if sb, hasSandbox := lEp.getSandbox(); hasSandbox {
-			sbList = append(sbList, sb)
-		}
-	}
-
-	for _, sb := range sbList {
-		if isAdd {
-			sb.addHostsEntries(recs)
-		} else {
-			sb.deleteHostsEntries(recs)
-		}
-	}
 }
 
 func (n *network) getSvcRecords(ep *endpoint) []etchosts.Record {

@@ -1213,6 +1213,10 @@ func (f *fakeSandbox) SetKey(key string) error {
 	return nil
 }
 
+func (f *fakeSandbox) ResolveName(name string) net.IP {
+	return nil
+}
+
 func TestExternalKey(t *testing.T) {
 	externalKeyTest(t, false)
 }
@@ -1698,6 +1702,7 @@ func TestEnableIPv6(t *testing.T) {
 	}
 
 	tmpResolvConf := []byte("search pommesfrites.fr\nnameserver 12.34.56.78\nnameserver 2001:4860:4860::8888\n")
+	expectedResolvConf := []byte("search pommesfrites.fr\nnameserver 127.0.0.1\n")
 	//take a copy of resolv.conf for restoring after test completes
 	resolvConfSystem, err := ioutil.ReadFile("/etc/resolv.conf")
 	if err != nil {
@@ -1760,8 +1765,8 @@ func TestEnableIPv6(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(content, tmpResolvConf) {
-		t.Fatalf("Expected:\n%s\nGot:\n%s", string(tmpResolvConf), string(content))
+	if !bytes.Equal(content, expectedResolvConf) {
+		t.Fatalf("Expected:\n%s\nGot:\n%s", string(expectedResolvConf), string(content))
 	}
 
 	if err != nil {
@@ -1854,9 +1859,8 @@ func TestResolvConf(t *testing.T) {
 	}
 
 	tmpResolvConf1 := []byte("search pommesfrites.fr\nnameserver 12.34.56.78\nnameserver 2001:4860:4860::8888\n")
-	expectedResolvConf1 := []byte("search pommesfrites.fr\nnameserver 12.34.56.78\n")
 	tmpResolvConf2 := []byte("search pommesfrites.fr\nnameserver 112.34.56.78\nnameserver 2001:4860:4860::8888\n")
-	expectedResolvConf2 := []byte("search pommesfrites.fr\nnameserver 112.34.56.78\n")
+	expectedResolvConf1 := []byte("search pommesfrites.fr\nnameserver 127.0.0.1\n")
 	tmpResolvConf3 := []byte("search pommesfrites.fr\nnameserver 113.34.56.78\n")
 
 	//take a copy of resolv.conf for restoring after test completes
@@ -1965,8 +1969,8 @@ func TestResolvConf(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(content, expectedResolvConf2) {
-		t.Fatalf("Expected:\n%s\nGot:\n%s", string(expectedResolvConf2), string(content))
+	if !bytes.Equal(content, expectedResolvConf1) {
+		t.Fatalf("Expected:\n%s\nGot:\n%s", string(expectedResolvConf1), string(content))
 	}
 
 	if err := ioutil.WriteFile(resolvConfPath, tmpResolvConf3, 0644); err != nil {

@@ -392,18 +392,6 @@ func (ep *endpoint) sbJoin(sbox Sandbox, options ...EndpointOption) error {
 	// Watch for service records
 	network.getController().watchSvcRecord(ep)
 
-	address := ""
-	if ip := ep.getFirstInterfaceAddress(); ip != nil {
-		address = ip.String()
-	}
-	if err = sb.updateHostsFile(address, network.getSvcRecords(ep)); err != nil {
-		return err
-	}
-
-	if err = sb.updateDNS(network.enableIPv6); err != nil {
-		return err
-	}
-
 	if err = network.getController().updateToStore(ep); err != nil {
 		return err
 	}

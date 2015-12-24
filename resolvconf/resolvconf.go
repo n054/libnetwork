@@ -17,6 +17,8 @@ var (
 	// Note: the default IPv4 & IPv6 resolvers are set to Google's Public DNS
 	defaultIPv4Dns = []string{"nameserver 8.8.8.8", "nameserver 8.8.4.4"}
 	defaultIPv6Dns = []string{"nameserver 2001:4860:4860::8888", "nameserver 2001:4860:4860::8844"}
+	defaultV4Dns   = []string{"8.8.8.8", "8.8.4.4"}
+	defaultV6Dns   = []string{"2001:4860:4860::8888", "2001:4860:4860::8844"}
 	ipv4NumBlock   = `(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)`
 	ipv4Address    = `(` + ipv4NumBlock + `\.){3}` + ipv4NumBlock
 	// This is not an IPv6 address verifier as it will accept a super-set of IPv6, and also
@@ -102,6 +104,28 @@ func GetLastModified() *File {
 	defer lastModified.Unlock()
 
 	return &File{Content: lastModified.contents, Hash: lastModified.sha256}
+}
+
+// FilterDNSList removes the localhost IPs from the list of IP addresses. If no valid
+// address remains it appends the default IPv4 ov IPv6 DNS server IP.
+func FilterDNSList(dnsList []string, ipv6Enabled bool) []string {
+	var dnsExt []string
+
+	for _, ip := range dnsList {
+		if !dns.IsLocalhost(ip) {
+			dnsExt = append(dnsExt, ip)
+		}
+	}
+
+	if len(dnsExt) == 0 {
+		logrus.Infof("No non-localhost DNS nameservers are left in resolv.conf. Using default external servers : %v", defaultV4Dns)
+		dnsExt = defaultV4Dns
+		if ipv6Enabled {
+			logrus.Infof("IPv6 enabled; Adding default IPv6 external servers : %v", defaultV6Dns)
+			dnsExt = append(dnsExt, defaultV6Dns...)
+		}
+	}
+	return dnsExt
 }
 
 // FilterResolvDNS cleans up the config in resolvConf.  It has two main jobs:
