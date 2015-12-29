@@ -68,7 +68,10 @@ type NetworkInfo interface {
 // When the function returns true, the walk will stop.
 type EndpointWalker func(ep Endpoint) bool
 
-type svcMap map[string]net.IP
+type svcInfo struct {
+	svcMap map[string]net.IP
+	ipMap  map[string]string
+}
 
 // IpamConf contains all the ipam related configurations for a network
 type IpamConf struct {
@@ -158,7 +161,6 @@ type network struct {
 	epCnt        *endpointCnt
 	generic      options.Generic
 	dbIndex      uint64
-	svcRecords   svcMap
 	dbExists     bool
 	persist      bool
 	stopWatchCh  chan struct{}
@@ -823,6 +825,19 @@ func (n *network) EndpointByID(id string) (Endpoint, error) {
 	return ep, nil
 }
 
+// Given an net.IP {10 0 0 1} returns a string of the form
+// 1.0.0.10. This one time operation makes the lookup optimal
+// for DNS PTR queries
+func ipToStr(ip net.IP) string {
+	if ip.To4() != nil {
+		return (strconv.Itoa(int(ip[3])) + "." +
+			strconv.Itoa(int(ip[2])) + "." +
+			strconv.Itoa(int(ip[1])) + "." +
+			strconv.Itoa(int(ip[0])))
+	}
+	return ""
+}
+
 func (n *network) updateSvcRecord(ep *endpoint, localEps []*endpoint, isAdd bool) {
 	if ep.isAnonymous() {
 		return
@@ -831,24 +846,33 @@ func (n *network) updateSvcRecord(ep *endpoint, localEps []*endpoint, isAdd bool
 	c := n.getController()
 	sr, ok := c.svcDb[n.ID()]
 	if !ok {
-		c.svcDb[n.ID()] = svcMap{}
+		c.svcDb[n.ID()] = svcInfo{
+			svcMap: make(map[string]net.IP),
+			ipMap:  make(map[string]string),
+		}
 		sr = c.svcDb[n.ID()]
 	}
 
 	n.Lock()
 	if iface := ep.Iface(); iface.Address() != nil {
+
+		ipStr := ipToStr(iface.Address().IP)
 		if isAdd {
 			// If we already have this endpoint in service db just return
-			if _, ok := sr[ep.Name()]; ok {
+			if _, ok := sr.svcMap[ep.Name()]; ok {
 				n.Unlock()
 				return
 			}
 
-			sr[ep.Name()] = iface.Address().IP
-			sr[ep.Name()+"."+n.name] = iface.Address().IP
+			sr.svcMap[ep.Name()] = iface.Address().IP
+			sr.svcMap[ep.Name()+"."+n.name] = iface.Address().IP
+
+			sr.ipMap[ipStr] = ep.Name()
 		} else {
-			delete(sr, ep.Name())
-			delete(sr, ep.Name()+"."+n.name)
+			delete(sr.svcMap, ep.Name())
+			delete(sr.svcMap, ep.Name()+"."+n.name)
+
+			delete(sr.ipMap, ipStr)
 		}
 	}
 	n.Unlock()
@@ -861,7 +885,7 @@ func (n *network) getSvcRecords(ep *endpoint) []etchosts.Record {
 	var recs []etchosts.Record
 	sr, _ := n.ctrlr.svcDb[n.id]
 
-	for h, ip := range sr {
+	for h, ip := range sr.svcMap {
 		if ep != nil && strings.Split(h, ".")[0] == ep.Name() {
 			continue
 		}

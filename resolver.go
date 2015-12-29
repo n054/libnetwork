@@ -137,6 +137,24 @@ func (r *resolver) handleIPv4Query(name string, query *dns.Msg) *dns.Msg {
 	return resp
 }
 
+func (r *resolver) handlePTRQuery(ip string, query *dns.Msg) *dns.Msg {
+	name := r.sb.ResolveIP(ip)
+	if len(name) == 0 {
+		return nil
+	}
+
+	log.Debugf("Lookup for IP %s: name %s", ip, name)
+
+	resp := new(dns.Msg)
+	resp.SetReply(query)
+
+	rr := new(dns.PTR)
+	rr.Hdr = dns.RR_Header{Name: name, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: 1800}
+	rr.Ptr = name
+	resp.Answer = append(resp.Answer, rr)
+	return resp
+}
+
 func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 	var (
 		resp *dns.Msg
@@ -146,6 +164,8 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 	name := query.Question[0].Name
 	if query.Question[0].Qtype == dns.TypeA {
 		resp = r.handleIPv4Query(name, query)
+	} else if query.Question[0].Qtype == dns.TypePTR {
+		resp = r.handlePTRQuery(name, query)
 	}
 
 	if resp == nil {

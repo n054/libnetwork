@@ -43,6 +43,9 @@ type Sandbox interface {
 	// ResolveName searches for the service name in the networks to which the sandbox
 	// is connected to.
 	ResolveName(name string) net.IP
+	// ResolveIP returns the service name for the passed in IP. IP is in reverse dotted
+	// notation; the format used for DNS PTR records
+	ResolveIP(name string) string
 }
 
 // SandboxOption is a option setter function type used to pass varios options to
@@ -372,6 +375,26 @@ func (sb *sandbox) updateGateway(ep *endpoint) error {
 	return nil
 }
 
+func (sb *sandbox) ResolveIP(ip string) string {
+	var svc string
+	log.Debugf("IP To resolve %v", ip)
+
+	for _, ep := range sb.getConnectedEndpoints() {
+		n := ep.getNetwork()
+
+		sr, ok := n.getController().svcDb[n.ID()]
+		if !ok {
+			continue
+		}
+
+		svc, ok = sr.ipMap[ip]
+		if ok {
+			return svc + "." + n.Name()
+		}
+	}
+	return svc
+}
+
 func (sb *sandbox) ResolveName(name string) net.IP {
 	var ip net.IP
 	parts := strings.Split(name, ".")
@@ -389,7 +412,7 @@ func (sb *sandbox) ResolveName(name string) net.IP {
 			continue
 		}
 
-		ip, ok = sr[parts[0]]
+		ip, ok = sr.svcMap[parts[0]]
 		if ok {
 			return ip
 		}
