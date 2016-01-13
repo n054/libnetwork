@@ -116,8 +116,26 @@ func (r *resolver) ResolverOptions() []string {
 	return []string{"ndots:0"}
 }
 
+func (r *resolver) handleIPv6Query(name string, query *dns.Msg) (*dns.Msg, error) {
+	addr := r.sb.ResolveName(name, net.IPv6len)
+	if addr == nil {
+		return nil, nil
+	}
+
+	log.Debugf("Lookup for %s: IP %s", name, addr.String())
+
+	resp := new(dns.Msg)
+	resp.SetReply(query)
+
+	rr := new(dns.AAAA)
+	rr.Hdr = dns.RR_Header{Name: name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: respTTL}
+	rr.AAAA = addr
+	resp.Answer = append(resp.Answer, rr)
+	return resp, nil
+}
+
 func (r *resolver) handleIPv4Query(name string, query *dns.Msg) (*dns.Msg, error) {
-	addr := r.sb.ResolveName(name)
+	addr := r.sb.ResolveName(name, net.IPv4len)
 	if addr == nil {
 		return nil, nil
 	}
@@ -172,6 +190,8 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 	name := query.Question[0].Name
 	if query.Question[0].Qtype == dns.TypeA {
 		resp, err = r.handleIPv4Query(name, query)
+	} else if query.Question[0].Qtype == dns.TypeAAAA {
+		resp, err = r.handleIPv6Query(name, query)
 	} else if query.Question[0].Qtype == dns.TypePTR {
 		resp, err = r.handlePTRQuery(name, query)
 	}

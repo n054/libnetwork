@@ -40,9 +40,9 @@ type Sandbox interface {
 	Rename(name string) error
 	// Delete destroys this container after detaching it from all connected endpoints.
 	Delete() error
-	// ResolveName searches for the service name in the networks to which the sandbox
-	// is connected to.
-	ResolveName(name string) net.IP
+	// ResolveName resolves a service name to an IPv4 or IPv6 address by searching the
+	// networks the sandbox is connected to.
+	ResolveName(name string, iplen int) net.IP
 	// ResolveIP returns the service name for the passed in IP. IP is in reverse dotted
 	// notation; the format used for DNS PTR records
 	ResolveIP(name string) string
@@ -419,8 +419,15 @@ func (sb *sandbox) ResolveIP(ip string) string {
 	return svc
 }
 
-func (sb *sandbox) ResolveName(name string) net.IP {
-	var ip net.IP
+func (sb *sandbox) ResolveName(name string, iplen int) net.IP {
+	var (
+		ip net.IP
+		v6 bool
+	)
+	if iplen == net.IPv6len {
+		v6 = true
+	}
+
 	parts := strings.Split(name, ".")
 	log.Debugf("To resolve %v", parts)
 
@@ -431,16 +438,16 @@ func (sb *sandbox) ResolveName(name string) net.IP {
 	}
 	epList := sb.getConnectedEndpoints()
 	// First check for local container alias
-	ip = sb.resolveName(reqName, networkName, epList, true)
+	ip = sb.resolveName(reqName, networkName, epList, true, v6)
 	if ip != nil {
 		return ip
 	}
 
 	// Resolve the actual container name
-	return sb.resolveName(reqName, networkName, epList, false)
+	return sb.resolveName(reqName, networkName, epList, false, v6)
 }
 
-func (sb *sandbox) resolveName(req string, networkName string, epList []*endpoint, alias bool) net.IP {
+func (sb *sandbox) resolveName(req string, networkName string, epList []*endpoint, alias bool, v6 bool) net.IP {
 	for _, ep := range epList {
 		name := req
 		n := ep.getNetwork()
@@ -477,8 +484,13 @@ func (sb *sandbox) resolveName(req string, networkName string, epList []*endpoin
 			continue
 		}
 
+		var ip []net.IP
 		n.Lock()
-		ip, ok := sr.svcMap[name]
+		if v6 {
+			ip, ok = sr.svcIPv6Map[name]
+		} else {
+			ip, ok = sr.svcMap[name]
+		}
 		n.Unlock()
 		if ok {
 			return ip[0]
