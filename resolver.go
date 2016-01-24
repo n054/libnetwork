@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/iptables"
@@ -36,7 +37,8 @@ const (
 	ptrIPv4domain = ".in-addr.arpa."
 	ptrIPv6domain = ".ip6.arpa."
 	respTTL       = 1800
-	maxExtDNS     = 3 //max number of external servers to try
+	maxExtDNS     = 3  //max number of external servers to try
+	maxConcurrent = 10 //applies only for loopback queries
 )
 
 // resolver implements the Resolver interface
@@ -48,6 +50,7 @@ type resolver struct {
 	tcpServer *dns.Server
 	tcpListen *net.TCPListener
 	err       error
+	count     int32
 }
 
 // NewResolver creates a new instance of the Resolver
@@ -194,6 +197,33 @@ func (r *resolver) handlePTRQuery(ptr string, query *dns.Msg) (*dns.Msg, error) 
 	return resp, nil
 }
 
+func (r *resolver) loopbackQueryInc() bool {
+	for {
+		c := atomic.LoadInt32(&r.count)
+		if c == maxConcurrent {
+			return false
+		}
+		if !atomic.CompareAndSwapInt32(&r.count, c, c+1) {
+			continue
+		}
+		return true
+	}
+}
+
+func (r *resolver) loopbackQueryDec() bool {
+	for {
+		c := atomic.LoadInt32(&r.count)
+		if c == 0 {
+			// should never happen..
+			return false
+		}
+		if !atomic.CompareAndSwapInt32(&r.count, c, c-1) {
+			continue
+		}
+		return true
+	}
+}
+
 func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 	var (
 		resp *dns.Msg
@@ -224,14 +254,33 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 		for i := 0; i < num; i++ {
 			log.Debugf("Querying ext dns %s:%s for %s[%d]", w.LocalAddr().Network(), r.extDNS[i], name, query.Question[0].Qtype)
 
-			c := &dns.Client{Net: w.LocalAddr().Network()}
-			addr := fmt.Sprintf("%s:%d", r.extDNS[i], 53)
+			query := func() {
+				c := &dns.Client{Net: w.LocalAddr().Network()}
+				addr := fmt.Sprintf("%s:%d", r.extDNS[i], 53)
 
-			resp, _, err = c.Exchange(query, addr)
+				resp, _, err = c.Exchange(query, addr)
+			}
+
+			if net.ParseIP(r.extDNS[i]).IsLoopback() {
+				// If a loopback IP was passed though --dns its likely the container is
+				// running a dns server. When embedded server forwards the query to that
+				// container it should resolve it and not pass it back to embedded server
+				// Doing so will  result in a loop. To protect against that we limit the
+				// max number of concurrent queries that embedded server forwards to the
+				// container's loopback.
+				if !r.loopbackQueryInc() {
+					continue
+				}
+				r.sb.execFunc(query)
+				r.loopbackQueryDec()
+			} else {
+				query()
+			}
+
 			if err == nil {
 				break
 			}
-			log.Errorf("external resolution failed, %s", err)
+			log.Debugf("external resolution failed, %s", err)
 		}
 		if resp == nil {
 			return
